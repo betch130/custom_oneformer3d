@@ -2,12 +2,14 @@ import torch
 import torch.nn.functional as F
 import spconv.pytorch as spconv
 from torch_scatter import scatter_mean
-import MinkowskiEngine as ME
+import torchsparse as ts
+from torchsparse.utils import collate
 
 from mmdet3d.registry import MODELS
 from mmdet3d.structures import PointData
 from mmdet3d.models import Base3DDetector
 from .mask_matrix_nms import mask_matrix_nms
+
 
 
 class ScanNetOneFormer3DMixin:
@@ -308,23 +310,22 @@ class ScanNetOneFormer3D(ScanNetOneFormer3DMixin, Base3DDetector):
                 sparse tensor.
         """
         if elastic_points is None:
-            coordinates, features = ME.utils.batch_sparse_collate(
+            coordinates, features = collate.sparse_collate_fn(
                 [((p[:, :3] - p[:, :3].min(0)[0]) / self.voxel_size,
                   torch.hstack((p[:, 3:], p[:, :3] - p[:, :3].mean(0))))
                  for p in points])
         else:
-            coordinates, features = ME.utils.batch_sparse_collate(
+            coordinates, features = collate.sparse_collate_fn(
                 [((el_p - el_p.min(0)[0]),
                   torch.hstack((p[:, 3:], p[:, :3] - p[:, :3].mean(0))))
                  for el_p, p in zip(elastic_points, points)])
         
         spatial_shape = torch.clip(
-            coordinates.max(0)[0][1:] + 1, self.min_spatial_shape)
-        field = ME.TensorField(features=features, coordinates=coordinates)
-        tensor = field.sparse()
-        coordinates = tensor.coordinates
-        features = tensor.features
-        inverse_mapping = field.inverse_mapping(tensor.coordinate_map_key)
+            coordinates[0].max(0)[0][1:] + 1, self.min_spatial_shape)
+        tensor = ts.tensor.SparseTensor(feats=features, coords=coordinates)
+        coordinates = tensor.C[0]
+        features = tensor.F[0]
+        inverse_mapping =  torch.argsort(tensor.C[0][:, 0]) 
 
         return coordinates, features, inverse_mapping, spatial_shape
 
@@ -496,16 +497,15 @@ class ScanNet200OneFormer3D(ScanNetOneFormer3DMixin, Base3DDetector):
                 coordinates.append(batch_inputs_dict['points'][i][:, :3])
             features.append(batch_inputs_dict['points'][i][:, 3:])
         
-        coordinates, features = ME.utils.batch_sparse_collate(
-            [(c / self.voxel_size, f) for c, f in zip(coordinates, features)],
-            device=coordinates[0].device)
-        field = ME.TensorField(coordinates=coordinates, features=features)
+        coordinates, features = collate.sparse_collate_fn(
+            [(c / self.voxel_size, f) for c, f in zip(coordinates, features)])
+        sparse_tensor = ts.tensor.SparseTensor(coords=coordinates, feats=features)
 
         # forward of backbone and neck
-        x = self.backbone(field.sparse())
+        x = self.backbone(sparse_tensor)
         if self.with_neck:
             x = self.neck(x)
-        x = x.slice(field).features
+        x = x.slice(sparse_tensor).F
 
         # apply scatter_mean
         sp_pts_masks, n_super_points = [], []
@@ -648,6 +648,7 @@ class S3DISOneFormer3D(Base3DDetector):
             List[Tensor]: of len batch_size,
                 each of shape (n_points_i, n_channels).
         """
+
         x = self.input_conv(x)
         x, _ = self.unet(x)
         x = self.output_layer(x)
@@ -670,24 +671,27 @@ class S3DISOneFormer3D(Base3DDetector):
                 sparse tensor.
         """
         if elastic_points is None:
-            coordinates, features = ME.utils.batch_sparse_collate(
+            sparse_tensor = collate.sparse_collate_fn(
                 [((p[:, :3] - p[:, :3].min(0)[0]) / self.voxel_size,
                   torch.hstack((p[:, 3:], p[:, :3] - p[:, :3].mean(0))))
                  for p in points])
+            coordinates, features = sparse_tensor.coords, sparse_tensor.feats
         else:
-            coordinates, features = ME.utils.batch_sparse_collate(
+            sparse_tensor =collate.sparse_collate_fn(
                 [((el_p - el_p.min(0)[0]),
                   torch.hstack((p[:, 3:], p[:, :3] - p[:, :3].mean(0))))
                  for el_p, p in zip(elastic_points, points)])
+            coordinates, features = sparse_tensor.coords, sparse_tensor.feats
 
+
+        print(type(coordinates), type(features))
+        
         spatial_shape = torch.clip(
             coordinates.max(0)[0][1:] + 1, self.min_spatial_shape)
-        field = ME.TensorField(features=features, coordinates=coordinates)
-        tensor = field.sparse()
-        coordinates = tensor.coordinates
-        features = tensor.features
-        inverse_mapping = field.inverse_mapping(tensor.coordinate_map_key)
-
+        tensor = ts.tensor.SparseTensor(feats=features, coords=coordinates)
+        coordinates = tensor.C
+        features = tensor.F
+        inverse_mapping =  torch.argsort(tensor.C[:, 0]) 
         return coordinates, features, inverse_mapping, spatial_shape
 
     def _forward(*args, **kwargs):
@@ -710,6 +714,8 @@ class S3DISOneFormer3D(Base3DDetector):
         coordinates, features, inverse_mapping, spatial_shape = self.collate(
             batch_inputs_dict['points'],
             batch_inputs_dict.get('elastic_coords', None))
+        coordinates = coordinates.int()
+        features = features
         x = spconv.SparseConvTensor(
             features, coordinates, spatial_shape, len(batch_data_samples))
 
@@ -1110,23 +1116,23 @@ class InstanceOnlyOneFormer3D(Base3DDetector):
                 sparse tensor.
         """
         if elastic_points is None:
-            coordinates, features = ME.utils.batch_sparse_collate(
+            batch = collate.sparse_collate_fn(
                 [((p[:, :3] - p[:, :3].min(0)[0]) / self.voxel_size,
                   torch.hstack((p[:, 3:], p[:, :3] - p[:, :3].mean(0))))
                  for p in points])
+            coordinates, features = batch.coords, batch.feats
         else:
-            coordinates, features = ME.utils.batch_sparse_collate(
+            coordinates, features = collate.sparse_collate_fn(
                 [((el_p - el_p.min(0)[0]),
                   torch.hstack((p[:, 3:], p[:, :3] - p[:, :3].mean(0))))
                  for el_p, p in zip(elastic_points, points)])
         
         spatial_shape = torch.clip(
-            coordinates.max(0)[0][1:] + 1, self.min_spatial_shape)
-        field = ME.TensorField(features=features, coordinates=coordinates)
-        tensor = field.sparse()
-        coordinates = tensor.coordinates
-        features = tensor.features
-        inverse_mapping = field.inverse_mapping(tensor.coordinate_map_key)
+            coordinates[0].max(0)[0][1:] + 1, self.min_spatial_shape)
+        tensor = ts.tensor.SparseTensor(feats=features, coords=coordinates)
+        coordinates = tensor.C[0]
+        features = tensor.F[0]
+        inverse_mapping =  torch.argsort(tensor.C[0][:, 0]) 
 
         return coordinates, features, inverse_mapping, spatial_shape
 

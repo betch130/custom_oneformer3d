@@ -1,8 +1,12 @@
+
+import os 
+import sys
+sys.path.insert(0, "/teamspace/studios/this_studio/oneformer3d")
 from .oneformer3d import (
     ScanNetOneFormer3D, ScanNet200OneFormer3D, S3DISOneFormer3D,
     InstanceOnlyOneFormer3D)
 from .spconv_unet import SpConvUNet
-from .mink_unet import Res16UNet34C
+#from .mink_unet import Res16UNet34C
 from .query_decoder import ScanNetQueryDecoder, QueryDecoder
 from .unified_criterion import (
     ScanNetUnifiedCriterion, S3DISUnifiedCriterion)
