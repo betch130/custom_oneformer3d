@@ -364,7 +364,7 @@ class ScanNetOneFormer3D(ScanNetOneFormer3DMixin, Base3DDetector):
             batch_inputs_dict.get('elastic_coords', None))
 
         x = spconv.SparseConvTensor(
-            features, coordinates, spatial_shape, len(batch_data_samples))
+            features, coordinates.int(), spatial_shape, len(batch_data_samples))
         sp_pts_masks = torch.hstack(sp_pts_masks)
         x = self.extract_feat(
             x, sp_pts_masks, inverse_mapping, batch_offsets)
@@ -682,9 +682,6 @@ class S3DISOneFormer3D(Base3DDetector):
                   torch.hstack((p[:, 3:], p[:, :3] - p[:, :3].mean(0))))
                  for el_p, p in zip(elastic_points, points)])
             coordinates, features = sparse_tensor.coords, sparse_tensor.feats
-
-
-        print(type(coordinates), type(features))
         
         spatial_shape = torch.clip(
             coordinates.max(0)[0][1:] + 1, self.min_spatial_shape)
@@ -769,7 +766,7 @@ class S3DISOneFormer3D(Base3DDetector):
         coordinates, features, inverse_mapping, spatial_shape = self.collate(
             batch_inputs_dict['points'])
         x = spconv.SparseConvTensor(
-            features, coordinates, spatial_shape, len(batch_data_samples))
+            features, coordinates.int(), spatial_shape, len(batch_data_samples))
 
         x = self.extract_feat(x)
 
@@ -1157,7 +1154,7 @@ class InstanceOnlyOneFormer3D(Base3DDetector):
             batch_inputs_dict['points'],
             batch_inputs_dict.get('elastic_coords', None))
         x = spconv.SparseConvTensor(
-            features, coordinates, spatial_shape, len(batch_data_samples))
+            features, coordinates.int(), spatial_shape, len(batch_data_samples))
 
         x = self.extract_feat(x)
 
@@ -1206,7 +1203,7 @@ class InstanceOnlyOneFormer3D(Base3DDetector):
         coordinates, features, inverse_mapping, spatial_shape = self.collate(
             batch_inputs_dict['points'])
         x = spconv.SparseConvTensor(
-            features, coordinates, spatial_shape, len(batch_data_samples))
+            features, coordinates.int(), spatial_shape, len(batch_data_samples))
 
         x = self.extract_feat(x)
 
